@@ -8,7 +8,7 @@ The plugin converts images (JPG/PNG) to **WebP in real-time** during the upload 
 
 ---
 
-### :rocket: Key Features
+### :package: Key Features
 
 * **Real-time Conversion:** Automatic JPG/PNG to WebP transformation upon upload.
 * **Media Library Management:** * *Keep Original:* Save both source and WebP.
@@ -20,7 +20,7 @@ The plugin converts images (JPG/PNG) to **WebP in real-time** during the upload 
 
 ---
 
-### :tools: Technical Details
+### :hammer: Technical Details
 
 The plugin leverages server-side processing for maximum reliability:
 * **Engine:** Requires **ImageMagick** or **GD Library** installed on the server.
@@ -29,7 +29,7 @@ The plugin leverages server-side processing for maximum reliability:
 
 ---
 
-### :gear: Installation
+### :wrench: Installation
 
 1. Download the latest release.
 2. Upload the plugin folder to your `/wp-content/plugins/` directory.
@@ -38,5 +38,6 @@ The plugin leverages server-side processing for maximum reliability:
 
 ---
 
-### :test_tube: Beta Testing
+### :microscope: Beta Testing
+
 This plugin is currently in a testing phase. If you encounter any bugs or have feature requests, please open an **Issue** here on GitHub.
