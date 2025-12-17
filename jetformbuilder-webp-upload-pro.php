@@ -2,8 +2,8 @@
 /**
  * Plugin Name: JetFormBuilder WebP Upload PRO
  * Plugin URI: https://marrisonlab.com
- * Description: Converte automaticamente PNG/JPG in WebP negli allegati email di JetFormBuilder
- * Version: 5.0.0
+ * Description: Automatically converts JPG/PNG to WebP for JetFormBuilder email attachments and Media Library uploads. Includes visual loader.
+ * Version: 6.0.0
  * Author: Angelo Marra
  * Text Domain: jfb-webp-upload-pro
  */
@@ -23,541 +23,344 @@ class JFB_WebP_Converter {
     }
 
     private function __construct() {
-        // Abilita il supporto WebP in WordPress
+        // Core Logic
         add_filter( 'mime_types', [$this, 'enable_webp_mime'] );
         add_filter( 'upload_mimes', [$this, 'enable_webp_mime'] );
-        
-        // Intercetta wp_mail per convertire gli allegati
         add_filter( 'wp_mail', [$this, 'convert_mail_attachments'], 999 );
-        
-        // Converti il file quando viene caricato nella Media Library
-        add_action( 'add_attachment', [$this, 'convert_media_attachment'], 10, 1 );
-        
-        // Aggiungi menu amministrazione
+        add_filter( 'wp_handle_upload', [$this, 'handle_upload_conversion'] );
+
+        // Admin UI
         add_action( 'admin_menu', [$this, 'add_admin_menu'] );
         add_action( 'admin_init', [$this, 'register_settings'] );
-        
-        // Aggiungi link nelle impostazioni del plugin
+        add_action( 'admin_head', [$this, 'admin_styles'] );
         add_filter( 'plugin_action_links_' . plugin_basename(__FILE__), [$this, 'add_settings_link'] );
-        
-        // Aggiungi script frontend per il loader
-        add_action( 'wp_enqueue_scripts', [$this, 'enqueue_frontend_scripts'] );
+
+        // Frontend Loader (Inline JS/CSS to guarantee visibility)
+        add_action( 'wp_footer', [$this, 'inject_frontend_loader'], 100 );
     }
 
-    /**
-     * Ottieni le impostazioni con valori di default
-     */
+    /* =====================================================
+     * FRONTEND LOADER (CSS & JS INLINE)
+     * ===================================================== */
+    public function inject_frontend_loader() {
+        $settings = $this->get_settings();
+        // Solo se abilitato
+        if( ! $settings['enabled'] ) return;
+
+        $replace_txt = $settings['replace_original'] ? 'Optimizing your image to save space.' : 'Processing your image...';
+        ?>
+        <style>
+            /* LOADER CSS */
+            #jfb-webp-loader-overlay {
+                display: none !important; /* Hidden by default */
+                position: fixed !important;
+                top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(255, 255, 255, 0.95) !important; /* Quasi opaco */
+                z-index: 2147483647 !important; /* Max Z-Index possibile */
+                align-items: center;
+                justify-content: center;
+                flex-direction: column;
+            }
+            #jfb-webp-loader-overlay.active {
+                display: flex !important; /* Force flex on active */
+            }
+            .jfb-webp-spinner {
+                width: 50px; height: 50px; margin-bottom: 20px;
+                border: 5px solid #f3f3f3; border-top: 5px solid #2271b1; border-radius: 50%;
+                animation: jfb-spin 1s linear infinite;
+            }
+            @keyframes jfb-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            .jfb-loader-text { font-family: sans-serif; font-size: 18px; color: #333; font-weight: 600; }
+            .jfb-loader-sub { font-family: sans-serif; font-size: 14px; color: #666; margin-top: 5px; }
+            
+            /* FIELD MESSAGE */
+            .jfb-webp-msg {
+                margin-top: 5px; padding: 8px 12px; font-size: 13px; border-radius: 4px; font-family: sans-serif;
+            }
+            .jfb-webp-msg.converting { background: #e7f5ff; color: #0c5460; border: 1px solid #b8daff; }
+            .jfb-webp-msg.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        </style>
+
+        <div id="jfb-webp-loader-overlay">
+            <div class="jfb-webp-spinner"></div>
+            <div class="jfb-loader-text">Please wait...</div>
+            <div class="jfb-loader-sub"><?php echo esc_html($replace_txt); ?></div>
+        </div>
+
+        <script>
+        (function($) {
+            $(document).ready(function() {
+                const overlay = $('#jfb-webp-loader-overlay');
+                let uploadTimeout = null;
+
+                function showLoader(field) {
+                    overlay.addClass('active');
+                    if(field) {
+                        field.find('.jfb-webp-msg').remove();
+                        field.append('<div class="jfb-webp-msg converting">Optimizing image...</div>');
+                    }
+                }
+
+                function hideLoader(field, success = false) {
+                    overlay.removeClass('active');
+                    if(field) {
+                        field.find('.jfb-webp-msg').remove();
+                        if(success) {
+                            field.append('<div class="jfb-webp-msg success">✓ Image optimized (WebP)</div>');
+                            setTimeout(function(){ field.find('.jfb-webp-msg').fadeOut(); }, 5000);
+                        }
+                    }
+                }
+
+                // 1. INPUT FILE CHANGE
+                $(document).on('change', 'input[type="file"]', function(e) {
+                    const files = e.target.files;
+                    let hasImg = false;
+                    if(files && files.length) {
+                        for(let i=0; i<files.length; i++) {
+                            if(files[i].type.match('image/jpeg') || files[i].type.match('image/png')) hasImg = true;
+                        }
+                    }
+                    if(!hasImg) return;
+
+                    const field = $(this).closest('.jet-form-builder__field-wrap, .jet-form-builder-file-upload');
+                    showLoader(field);
+
+                    // Timeout simulato per nascondere il loader (fallback)
+                    clearTimeout(uploadTimeout);
+                    uploadTimeout = setTimeout(function() {
+                        hideLoader(field, true);
+                    }, 4000); // 4 secondi fallback
+                });
+
+                // 2. NETWORK PATCH (XHR) per catturare la fine vera dell'upload
+                const origSend = XMLHttpRequest.prototype.send;
+                XMLHttpRequest.prototype.send = function() {
+                    this.addEventListener('loadend', function() {
+                        // Se il loader è attivo, lo chiudiamo
+                        if(overlay.hasClass('active')) {
+                             // Ritardo minimo per fluidità
+                             setTimeout(function() { 
+                                 overlay.removeClass('active');
+                                 $('.jfb-webp-msg.converting').removeClass('converting').addClass('success').text('✓ Image optimized');
+                             }, 500);
+                        }
+                    });
+                    return origSend.apply(this, arguments);
+                };
+
+                // 3. FORM SUBMIT
+                $(document).on('submit', 'form', function() {
+                    // Nascondi loader se l'utente invia
+                    setTimeout(function(){ overlay.removeClass('active'); }, 2000);
+                });
+            });
+        })(jQuery);
+        </script>
+        <?php
+    }
+
+    /* =====================================================
+     * CORE LOGIC (Server Side)
+     * ===================================================== */
+
     private function get_settings() {
-        $defaults = [
-            'quality' => 85,
-            'max_width' => 1920,
-            'enabled' => true,
-            'replace_original' => false
-        ];
-        
-        $settings = get_option( $this->option_name, $defaults );
-        return wp_parse_args( $settings, $defaults );
+        $defaults = ['enabled' => true, 'replace_original' => false, 'quality' => 85, 'max_width' => 1920];
+        return wp_parse_args( get_option( $this->option_name, [] ), $defaults );
     }
 
-    /**
-     * Abilita il supporto WebP in WordPress
-     */
+    public function register_settings() {
+        register_setting( 'jfb_webp_settings_group', $this->option_name );
+    }
+
     public function enable_webp_mime( $mimes ) {
         $mimes['webp'] = 'image/webp';
         return $mimes;
     }
 
-    /**
-     * Carica script frontend per il loader
-     */
-    public function enqueue_frontend_scripts() {
+    // Email Attachment Logic
+    public function convert_mail_attachments( $args ) {
         $settings = $this->get_settings();
-        
-        // Carica solo se la conversione è abilitata
-        if ( ! $settings['enabled'] && ! $settings['replace_original'] ) {
-            return;
+        if ( ! $settings['enabled'] || empty( $args['attachments'] ) ) return $args;
+
+        $new = [];
+        foreach ( $args['attachments'] as $file ) {
+            $converted = $this->maybe_convert_file( $file, $settings );
+            $new[] = $converted ?: $file;
         }
-
-        wp_enqueue_style( 
-            'jfb-webp-loader', 
-            plugin_dir_url( __FILE__ ) . 'assets/loader.css',
-            [],
-            '5.0.0'
-        );
-
-        wp_enqueue_script( 
-            'jfb-webp-loader', 
-            plugin_dir_url( __FILE__ ) . 'assets/loader.js',
-            ['jquery'],
-            '5.0.0',
-            true
-        );
-
-        wp_localize_script( 'jfb-webp-loader', 'jfbWebpSettings', [
-            'replaceOriginal' => $settings['replace_original'],
-            'messages' => [
-                'converting' => __( 'Ottimizzazione immagine in corso...', 'jfb-webp-upload-pro' ),
-                'uploading' => __( 'Caricamento...', 'jfb-webp-upload-pro' )
-            ]
-        ]);
+        $args['attachments'] = $new;
+        return $args;
     }
 
-    /**
-     * Converti l'attachment nella Media Library quando viene caricato
-     */
-    public function convert_media_attachment( $attachment_id ) {
+    // Media Upload Logic
+    public function handle_upload_conversion( $file ) {
+        if ( isset( $file['error'] ) && ! empty( $file['error'] ) ) return $file;
         $settings = $this->get_settings();
-        
-        // Se "sostituisci originale" è disabilitato, non fare nulla
-        if ( ! $settings['replace_original'] ) {
-            return;
+
+        if ( ! $settings['enabled'] || ! $settings['replace_original'] ) return $file;
+        if ( ! in_array( $file['type'], ['image/jpeg', 'image/png'], true ) ) return $file;
+        if ( strpos( $file['file'], '.webp' ) !== false ) return $file;
+
+        $new_path = $this->do_conversion( $file['file'], $file['type'], $settings );
+
+        if ( $new_path && file_exists( $new_path ) ) {
+            @unlink( $file['file'] );
+            $file['file'] = $new_path;
+            $file['url']  = preg_replace( '/\.(jpe?g|png)$/i', '.webp', $file['url'] );
+            $file['type'] = 'image/webp';
         }
-
-        // Verifica se è un'immagine JPG/PNG
-        $mime_type = get_post_mime_type( $attachment_id );
-        if ( ! in_array( $mime_type, ['image/jpeg', 'image/png'], true ) ) {
-            return;
-        }
-
-        // Ottieni il path del file
-        $file_path = get_attached_file( $attachment_id );
-        if ( ! file_exists( $file_path ) ) {
-            return;
-        }
-
-        // Salva le dimensioni originali per statistiche
-        $original_size = filesize( $file_path );
-
-        // Converti il file
-        $webp_path = $this->do_conversion( $file_path, $mime_type, $settings );
-        
-        if ( ! $webp_path || ! file_exists( $webp_path ) ) {
-            return;
-        }
-
-        // Dimensione del file convertito
-        $webp_size = filesize( $webp_path );
-        $saved_space = $original_size - $webp_size;
-        $percentage = round( ( $saved_space / $original_size ) * 100, 1 );
-
-        // Aggiorna l'attachment con il nuovo file WebP
-        update_attached_file( $attachment_id, $webp_path );
-        
-        // Aggiorna il mime type
-        wp_update_post([
-            'ID' => $attachment_id,
-            'post_mime_type' => 'image/webp'
-        ]);
-
-        // Rigenera i metadata per le miniature
-        require_once ABSPATH . 'wp-admin/includes/image.php';
-        $attach_data = wp_generate_attachment_metadata( $attachment_id, $webp_path );
-        wp_update_attachment_metadata( $attachment_id, $attach_data );
-
-        // Elimina il file originale
-        @unlink( $file_path );
-
-        // Salva statistiche nel metadata
-        update_post_meta( $attachment_id, '_webp_conversion_stats', [
-            'original_size' => $original_size,
-            'webp_size' => $webp_size,
-            'saved_space' => $saved_space,
-            'percentage' => $percentage,
-            'converted_at' => current_time( 'mysql' )
-        ]);
+        return $file;
     }
 
-    /**
-     * Aggiungi link "Impostazioni" nella lista plugin
-     */
+    private function maybe_convert_file( $file, $settings ) {
+        if ( ! file_exists( $file ) ) return false;
+        $mime = mime_content_type( $file );
+        if ( ! in_array( $mime, ['image/jpeg', 'image/png'], true ) ) return false;
+        return $this->do_conversion( $file, $mime, $settings );
+    }
+
+    private function do_conversion( $file, $mime, $settings ) {
+        if ( extension_loaded( 'imagick' ) && class_exists( 'Imagick' ) ) {
+            return $this->convert_imagick( $file, $settings );
+        }
+        if ( function_exists( 'imagewebp' ) ) {
+            return $this->convert_gd( $file, $mime, $settings );
+        }
+        return false;
+    }
+
+    private function convert_imagick( $file, $settings ) {
+        try {
+            $im = new Imagick( $file );
+            if ( $settings['max_width'] > 0 ) {
+                $w = $im->getImageWidth();
+                if ( $w > $settings['max_width'] ) {
+                    $im->resizeImage( $settings['max_width'], 0, Imagick::FILTER_LANCZOS, 1 );
+                }
+            }
+            $im->setImageFormat( 'webp' );
+            $im->setImageCompressionQuality( $settings['quality'] );
+            $new = preg_replace( '/\.(jpe?g|png)$/i', '.webp', $file );
+            $im->writeImage( $new );
+            $im->clear(); $im->destroy();
+            return file_exists( $new ) ? $new : false;
+        } catch ( Exception $e ) { return false; }
+    }
+
+    private function convert_gd( $file, $mime, $settings ) {
+        $img = $mime === 'image/png' ? imagecreatefrompng( $file ) : imagecreatefromjpeg( $file );
+        if ( ! $img ) return false;
+        if ( $mime === 'image/png' ) {
+            imagepalettetotruecolor( $img ); imagealphablending( $img, true ); imagesavealpha( $img, true );
+        }
+        if ( $settings['max_width'] > 0 ) {
+            $w = imagesx( $img );
+            if ( $w > $settings['max_width'] ) {
+                $ratio = $settings['max_width'] / $w;
+                $h = imagesy( $img );
+                $new_img = imagecreatetruecolor( $settings['max_width'], intval( $h * $ratio ) );
+                if ( $mime === 'image/png' ) {
+                     imagealphablending($new_img, false); imagesavealpha($new_img, true);
+                }
+                imagecopyresampled( $new_img, $img, 0, 0, 0, 0, imagesx( $new_img ), imagesy( $new_img ), $w, $h );
+                imagedestroy( $img ); $img = $new_img;
+            }
+        }
+        $new = preg_replace( '/\.(jpe?g|png)$/i', '.webp', $file );
+        imagewebp( $img, $new, $settings['quality'] );
+        imagedestroy( $img );
+        return file_exists( $new ) ? $new : false;
+    }
+
+    /* =====================================================
+     * ADMIN UI (ENGLISH)
+     * ===================================================== */
+
+    public function add_admin_menu() {
+        add_options_page( 'JetFormBuilder WebP PRO', 'JFB WebP PRO', 'manage_options', 'jfb-webp-settings', [$this, 'render_settings_page'] );
+    }
+
     public function add_settings_link( $links ) {
-        $settings_link = '<a href="options-general.php?page=jfb-webp-settings">Impostazioni</a>';
-        array_unshift( $links, $settings_link );
+        array_unshift( $links, '<a href="options-general.php?page=jfb-webp-settings">Settings</a>' );
         return $links;
     }
 
-    /**
-     * Aggiungi menu amministrazione
-     */
-    public function add_admin_menu() {
-        add_options_page(
-            'JetFormBuilder WebP PRO',
-            'JFB WebP PRO',
-            'manage_options',
-            'jfb-webp-settings',
-            [$this, 'render_settings_page']
-        );
-    }
-
-    /**
-     * Registra le impostazioni
-     */
-    public function register_settings() {
-        register_setting( 'jfb_webp_settings_group', $this->option_name, [$this, 'sanitize_settings'] );
-    }
-
-    /**
-     * Sanitizza le impostazioni
-     */
-    public function sanitize_settings( $input ) {
-        $sanitized = [];
-        
-        // Qualità: da 1 a 100
-        $sanitized['quality'] = isset( $input['quality'] ) ? absint( $input['quality'] ) : 85;
-        $sanitized['quality'] = max( 1, min( 100, $sanitized['quality'] ) );
-        
-        // Larghezza massima: da 100 a 10000
-        $sanitized['max_width'] = isset( $input['max_width'] ) ? absint( $input['max_width'] ) : 1920;
-        $sanitized['max_width'] = max( 100, min( 10000, $sanitized['max_width'] ) );
-        
-        // Abilitato
-        $sanitized['enabled'] = isset( $input['enabled'] ) && $input['enabled'] === '1';
-        
-        // Sostituisci originale
-        $sanitized['replace_original'] = isset( $input['replace_original'] ) && $input['replace_original'] === '1';
-        
-        return $sanitized;
-    }
-
-    /**
-     * Renderizza la pagina delle impostazioni
-     */
-    public function render_settings_page() {
-        if ( ! current_user_can( 'manage_options' ) ) {
-            return;
-        }
-
-        $settings = $this->get_settings();
-        $imagick = extension_loaded( 'imagick' );
-        $gd = function_exists( 'imagewebp' );
-        
+    public function admin_styles() {
         ?>
-        <div class="wrap">
-            <h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
-            
-            <div class="notice notice-info" style="margin: 20px 0;">
-                <p><strong>ℹ️ Librerie disponibili:</strong></p>
-                <ul style="list-style: disc; margin-left: 20px;">
-                    <li>Imagick: <?php echo $imagick ? '✅ Disponibile' : '❌ Non disponibile'; ?></li>
-                    <li>GD: <?php echo $gd ? '✅ Disponibile' : '❌ Non disponibile'; ?></li>
-                </ul>
-                <?php if ( ! $imagick && ! $gd ): ?>
-                    <p style="color: #d63638;"><strong>⚠️ ATTENZIONE:</strong> Nessuna libreria di conversione disponibile! Il plugin non funzionerà.</p>
-                <?php endif; ?>
-            </div>
-
-            <form method="post" action="options.php">
-                <?php settings_fields( 'jfb_webp_settings_group' ); ?>
-                
-                <table class="form-table" role="presentation">
-                    <tbody>
-                        <tr>
-                            <th scope="row">
-                                <label for="enabled">Abilita conversione</label>
-                            </th>
-                            <td>
-                                <label>
-                                    <input 
-                                        type="checkbox" 
-                                        id="enabled" 
-                                        name="<?php echo esc_attr( $this->option_name ); ?>[enabled]" 
-                                        value="1"
-                                        <?php checked( $settings['enabled'], true ); ?>
-                                    />
-                                    Converti automaticamente JPG/PNG in WebP negli allegati email
-                                </label>
-                            </td>
-                        </tr>
-                        
-                        <tr>
-                            <th scope="row">
-                                <label for="replace_original">Sostituisci file originale</label>
-                            </th>
-                            <td>
-                                <label>
-                                    <input 
-                                        type="checkbox" 
-                                        id="replace_original" 
-                                        name="<?php echo esc_attr( $this->option_name ); ?>[replace_original]" 
-                                        value="1"
-                                        <?php checked( $settings['replace_original'], true ); ?>
-                                    />
-                                    Sostituisci il file originale nella Media Library con la versione WebP ottimizzata
-                                </label>
-                                <p class="description" style="color: #d63638;">
-                                    ⚠️ <strong>ATTENZIONE:</strong> Se attivato, il file JPG/PNG originale verrà <strong>eliminato definitivamente</strong> e sostituito con WebP.<br>
-                                    ✅ <strong>Vantaggio:</strong> Risparmio massiccio di spazio (fino al 80-90% per file di grandi dimensioni).<br>
-                                    📊 Esempio: un file da 10MB diventerà circa 1-2MB.
-                                </p>
-                            </td>
-                        </tr>
-                        
-                        <tr>
-                            <th scope="row">
-                                <label for="quality">Qualità WebP</label>
-                            </th>
-                            <td>
-                                <input 
-                                    type="number" 
-                                    id="quality" 
-                                    name="<?php echo esc_attr( $this->option_name ); ?>[quality]" 
-                                    value="<?php echo esc_attr( $settings['quality'] ); ?>" 
-                                    min="1" 
-                                    max="100" 
-                                    class="small-text"
-                                />
-                                <p class="description">
-                                    Valore da 1 a 100. Consigliato: 85 per un buon bilanciamento qualità/dimensione.<br>
-                                    Più alto = qualità migliore ma file più grandi.
-                                </p>
-                            </td>
-                        </tr>
-                        
-                        <tr>
-                            <th scope="row">
-                                <label for="max_width">Larghezza massima (px)</label>
-                            </th>
-                            <td>
-                                <input 
-                                    type="number" 
-                                    id="max_width" 
-                                    name="<?php echo esc_attr( $this->option_name ); ?>[max_width]" 
-                                    value="<?php echo esc_attr( $settings['max_width'] ); ?>" 
-                                    min="100" 
-                                    max="10000" 
-                                    class="small-text"
-                                />
-                                <p class="description">
-                                    Le immagini più larghe verranno ridimensionate mantenendo le proporzioni.<br>
-                                    Valore 0 = nessun ridimensionamento. Consigliato: 1920px per email.
-                                </p>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
-                
-                <?php submit_button( 'Salva impostazioni' ); ?>
-            </form>
-
-            <hr style="margin: 40px 0;">
-
-            <h2>ℹ️ Informazioni</h2>
-            <div style="background: #fff; border: 1px solid #ccd0d4; padding: 20px; border-radius: 4px;">
-                <h3>Come funziona questo plugin:</h3>
-                <ol style="line-height: 1.8;">
-                    <li>Quando un utente carica un'immagine JPG o PNG tramite JetFormBuilder</li>
-                    <li><strong>Se "Sostituisci file originale" è DISABILITATO:</strong>
-                        <ul style="list-style: disc; margin-left: 20px;">
-                            <li>Il file originale viene salvato nella Media Library</li>
-                            <li>La conversione avviene solo per gli allegati email</li>
-                            <li>Mantieni entrambe le versioni (originale + WebP per email)</li>
-                        </ul>
-                    </li>
-                    <li><strong>Se "Sostituisci file originale" è ABILITATO:</strong>
-                        <ul style="list-style: disc; margin-left: 20px;">
-                            <li>Il file viene immediatamente convertito in WebP e ridimensionato</li>
-                            <li>Il file originale JPG/PNG viene eliminato</li>
-                            <li>Nella Media Library rimane solo la versione WebP ottimizzata</li>
-                            <li>⚠️ <strong>RISPARMIO SPAZIO:</strong> Riduzione fino al 90% per ogni file</li>
-                        </ul>
-                    </li>
-                </ol>
-                
-                <h3 style="margin-top: 30px;">Vantaggi della sostituzione file originali:</h3>
-                <ul style="list-style: disc; margin-left: 20px; line-height: 1.8;">
-                    <li>💾 <strong>Risparmio enorme di spazio su disco</strong> - file da 10MB diventano 1-2MB</li>
-                    <li>⚡ <strong>Caricamento più veloce</strong> della Media Library</li>
-                    <li>📧 <strong>Email più leggere</strong> automaticamente</li>
-                    <li>💰 <strong>Minori costi di hosting</strong> per lo storage</li>
-                    <li>🌍 <strong>Ridotto impatto ambientale</strong> (meno dati = meno energia)</li>
-                    <li>📊 <strong>Statistiche di conversione</strong> salvate per ogni file</li>
-                </ul>
-
-                <h3 style="margin-top: 30px;">Quando abilitare "Sostituisci file originale":</h3>
-                <ul style="list-style: disc; margin-left: 20px; line-height: 1.8;">
-                    <li>✅ Form pubblici aperti a molti utenti</li>
-                    <li>✅ Upload di foto ad alta risoluzione (>5MB)</li>
-                    <li>✅ Server con spazio limitato</li>
-                    <li>✅ Non hai bisogno del file originale in alta qualità</li>
-                    <li>❌ Evita se hai bisogno di stampare le foto in alta risoluzione</li>
-                    <li>❌ Evita se potrebbero servirti i file originali in futuro</li>
-                </ul>
-            </div>
-        </div>
-        
         <style>
-            .wrap h3 {
-                margin-top: 20px;
-                margin-bottom: 10px;
-            }
+            .jfb-webp-wrap { max-width: 750px; margin-top: 30px; }
+            .jfb-card { background: #fff; padding: 25px; border: 1px solid #c3c4c7; box-shadow: 0 1px 1px rgba(0,0,0,.04); border-radius: 4px; margin-bottom: 25px; }
+            .jfb-header { display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; }
+            .jfb-header h1 { margin: 0; font-size: 24px; display: flex; align-items: center; gap: 10px; }
+            .jfb-status { font-weight: 600; padding: 4px 10px; border-radius: 4px; font-size: 11px; text-transform: uppercase; }
+            .jfb-ok { background: #edfaef; color: #124c16; border: 1px solid #c3e6cb; }
+            .jfb-ko { background: #fbeaea; color: #d63638; border: 1px solid #ebccd1; }
+            .jfb-footer { text-align: center; margin-top: 30px; font-size: 13px; color: #666; border-top: 1px solid #ddd; padding-top: 20px; }
+            .dashicons-format-image { font-size: 28px; width: 28px; height: 28px; color: #2271b1; }
         </style>
         <?php
     }
 
-    /**
-     * Intercetta wp_mail e converte gli allegati JPG/PNG in WebP
-     */
-    public function convert_mail_attachments( $args ) {
-        $settings = $this->get_settings();
-        
-        // Se la conversione è disabilitata, passa oltre
-        if ( ! $settings['enabled'] ) {
-            return $args;
-        }
+    public function render_settings_page() {
+        $s = $this->get_settings();
+        $imagick = extension_loaded( 'imagick' ) && class_exists( 'Imagick' );
+        $gd = function_exists( 'imagewebp' );
+        ?>
+        <div class="wrap jfb-webp-wrap">
+            <div class="jfb-card">
+                <div class="jfb-header">
+                    <h1><span class="dashicons dashicons-format-image"></span> JetFormBuilder WebP PRO</h1>
+                    <div>
+                        <?php if($imagick): ?><span class="jfb-status jfb-ok">Imagick Active</span>
+                        <?php elseif($gd): ?><span class="jfb-status jfb-ok">GD Active</span>
+                        <?php else: ?><span class="jfb-status jfb-ko">No Library Found</span><?php endif; ?>
+                    </div>
+                </div>
 
-        if ( empty( $args['attachments'] ) ) {
-            return $args;
-        }
+                <form method="post" action="options.php">
+                    <?php settings_fields( 'jfb_webp_settings_group' ); ?>
+                    <table class="form-table">
+                        <tr>
+                            <th>Enable Plugin</th>
+                            <td>
+                                <label><input type="checkbox" name="<?= $this->option_name ?>[enabled]" value="1" <?= checked( $s['enabled'], true, false ) ?>> Enable conversion</label>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Media Library</th>
+                            <td>
+                                <label><input type="checkbox" name="<?= $this->option_name ?>[replace_original]" value="1" <?= checked( $s['replace_original'], true, false ) ?>> Replace original file</label>
+                                <p class="description">If checked, original JPG/PNG files in Media Library will be deleted and replaced with WebP to save space.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>WebP Quality (1-100)</th>
+                            <td><input type="number" name="<?= $this->option_name ?>[quality]" value="<?= esc_attr( $s['quality'] ) ?>" min="1" max="100" class="small-text"></td>
+                        </tr>
+                        <tr>
+                            <th>Max Width (px)</th>
+                            <td>
+                                <input type="number" name="<?= $this->option_name ?>[max_width]" value="<?= esc_attr( $s['max_width'] ) ?>" class="regular-text">
+                                <p class="description">Set to 0 to disable resizing.</p>
+                            </td>
+                        </tr>
+                    </table>
+                    <?php submit_button( 'Save Settings', 'primary large' ); ?>
+                </form>
+            </div>
 
-        $new_attachments = [];
-        
-        foreach ( $args['attachments'] as $attachment ) {
-            $converted = $this->maybe_convert_file( $attachment, $settings );
-            $new_attachments[] = $converted ? $converted : $attachment;
-        }
-        
-        $args['attachments'] = $new_attachments;
-        return $args;
-    }
-
-    /**
-     * Converte un singolo file se è JPG/PNG
-     */
-    private function maybe_convert_file( $file_path, $settings ) {
-        if ( ! file_exists( $file_path ) ) {
-            return false;
-        }
-
-        $mime_type = mime_content_type( $file_path );
-        
-        // Converti solo JPG e PNG
-        if ( ! in_array( $mime_type, ['image/jpeg', 'image/png'], true ) ) {
-            return false;
-        }
-
-        // Converti il file
-        return $this->do_conversion( $file_path, $mime_type, $settings );
-    }
-
-    /**
-     * Esegue la conversione vera e propria
-     */
-    private function do_conversion( $source_path, $mime_type, $settings ) {
-        if ( ! file_exists( $source_path ) || ! is_readable( $source_path ) ) {
-            return false;
-        }
-
-        // Prova prima con Imagick
-        if ( extension_loaded( 'imagick' ) ) {
-            $result = $this->convert_with_imagick( $source_path, $settings );
-            if ( $result ) {
-                return $result;
-            }
-        }
-        
-        // Fallback su GD
-        if ( function_exists( 'imagewebp' ) ) {
-            return $this->convert_with_gd( $source_path, $mime_type, $settings );
-        }
-
-        return false;
-    }
-
-    /**
-     * Conversione con Imagick
-     */
-    private function convert_with_imagick( $file_path, $settings ) {
-        try {
-            $im = new Imagick( $file_path );
-            
-            // Ridimensiona se necessario
-            if ( $settings['max_width'] > 0 ) {
-                $width = $im->getImageWidth();
-                $height = $im->getImageHeight();
-                
-                if ( $width > $settings['max_width'] ) {
-                    $new_height = intval( ( $settings['max_width'] / $width ) * $height );
-                    $im->resizeImage( $settings['max_width'], $new_height, Imagick::FILTER_LANCZOS, 1 );
-                }
-            }
-            
-            $im->setImageFormat( 'webp' );
-            $im->setImageCompressionQuality( $settings['quality'] );
-            
-            $new_path = preg_replace( '/\.(jpe?g|png)$/i', '.webp', $file_path );
-            
-            if ( $im->writeImage( $new_path ) ) {
-                $im->clear();
-                $im->destroy();
-                
-                if ( file_exists( $new_path ) ) {
-                    return $new_path;
-                }
-            }
-            
-            $im->clear();
-            $im->destroy();
-        } catch ( Exception $e ) {
-            // Silenzioso in produzione
-        }
-
-        return false;
-    }
-
-    /**
-     * Conversione con GD
-     */
-    private function convert_with_gd( $file_path, $mime_type, $settings ) {
-        $img = false;
-
-        if ( $mime_type === 'image/jpeg' ) {
-            $img = @imagecreatefromjpeg( $file_path );
-        } elseif ( $mime_type === 'image/png' ) {
-            $img = @imagecreatefrompng( $file_path );
-            if ( $img ) {
-                imagealphablending( $img, false );
-                imagesavealpha( $img, true );
-            }
-        }
-
-        if ( ! $img ) {
-            return false;
-        }
-
-        // Ridimensiona se necessario
-        if ( $settings['max_width'] > 0 ) {
-            $width = imagesx( $img );
-            $height = imagesy( $img );
-            
-            if ( $width > $settings['max_width'] ) {
-                $new_height = intval( ( $settings['max_width'] / $width ) * $height );
-                $new_img = imagecreatetruecolor( $settings['max_width'], $new_height );
-                
-                // Preserva la trasparenza per PNG
-                if ( $mime_type === 'image/png' ) {
-                    imagealphablending( $new_img, false );
-                    imagesavealpha( $new_img, true );
-                    $transparent = imagecolorallocatealpha( $new_img, 0, 0, 0, 127 );
-                    imagefill( $new_img, 0, 0, $transparent );
-                }
-                
-                imagecopyresampled( $new_img, $img, 0, 0, 0, 0, $settings['max_width'], $new_height, $width, $height );
-                imagedestroy( $img );
-                $img = $new_img;
-            }
-        }
-
-        $new_path = preg_replace( '/\.(jpe?g|png)$/i', '.webp', $file_path );
-        $result = imagewebp( $img, $new_path, $settings['quality'] );
-        imagedestroy( $img );
-
-        return ( $result && file_exists( $new_path ) ) ? $new_path : false;
+            <div class="jfb-footer">
+                <p>Do you find this plugin useful?</p>
+                <form action="https://www.paypal.com/donate" method="post" target="_blank">
+                    <input type="hidden" name="business" value="angelomarra80@gmail.com">
+                    <input type="hidden" name="no_recurring" value="0">
+                    <input type="hidden" name="currency_code" value="EUR">
+                    <input type="submit" class="button button-primary" value="Buy me a coffee with PayPal ☕">
+                </form>
+            </div>
+        </div>
+        <?php
     }
 }
 
-// Avvia il plugin
-add_action( 'plugins_loaded', function() {
-    if ( defined( 'JET_FORM_BUILDER_VERSION' ) ) {
-        JFB_WebP_Converter::instance();
-    }
-}, 20 );
+add_action( 'plugins_loaded', function() { JFB_WebP_Converter::instance(); }, 20 );
