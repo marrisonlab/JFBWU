@@ -1,33 +1,44 @@
-JetFormBuilder WebP Upload PRO
-Real-time Image Optimization for JetFormBuilder Forms.
+# JetFormBuilder WebP Upload PRO
 
-Stop letting unoptimized, massive images clog your server. JetFormBuilder WebP Upload PRO automatically intercepts image uploads from your forms and converts them to the modern WebP format instantly. This ensures faster loading speeds, reduced disk space usage, and a better user experience.
+[![License: GPL v2 or later](https://img.shields.io/badge/License-GPL%20v2%20or%20later-blue.svg)](https://www.gnu.org/licenses/gpl-2.0.html)
 
-🚀 Key Features
-Real-time Conversion: Converts JPG and PNG files to WebP during the upload process.
+**JetFormBuilder WebP Upload PRO** is a powerful extension for JetFormBuilder that solves a common web performance headache: users uploading massive, unoptimized images through your forms.
 
-Media Library Integration: Choose whether to keep the original file or replace it entirely with the optimized WebP version.
+The plugin converts images (JPG/PNG) to **WebP in real-time** during the upload process, significantly improving loading speeds and saving server disk space.
 
-Quality Control: Fine-tune the WebP compression level directly from the settings panel to balance quality and file size.
+---
 
-Automatic Resizing: Set a Maximum Width limit (e.g., 1920px) to prevent oversized photos (like 5000px+ raw uploads) from ever hitting your storage.
+## 🚀 Key Features
 
-Visual Feedback: Displays a native loader during the conversion process, ensuring users know their files are being processed.
+* **Real-time Conversion:** Automatic JPG/PNG to WebP transformation upon upload.
+* **Media Library Management:** * *Keep Original:* Save both source and WebP.
+    * *Replace Original:* Permanently delete the source file to keep your library clean.
+* **WebP Quality Control:** Fine-tune compression levels via the control panel.
+* **Smart Resizing:** Automatically downscale oversized images (e.g., from 5000px to 1920px) based on your Max Width settings.
+* **Visual Loader:** Immediate UI feedback for users during the processing phase.
+* **Full Support:** Works for both Email Attachments and Media Library uploads (Single & Multiple fields).
 
-Email & Media Support: Works seamlessly for images sent as email attachments and those saved to the WordPress Media Library.
+---
 
-Bulk Support: Fully compatible with both single and multiple file upload fields.
+## 🛠 Technical Details
 
-🛠 Technical Specifications
-Engine: Powered by server-side libraries (ImageMagick or GD Library) for high-performance processing.
+The plugin leverages server-side processing for maximum reliability:
+* **Engine:** Requires **ImageMagick** or **GD Library** installed on the server.
+* **Field Compatibility:** Specifically designed for the standard **"File Upload"** field.
+* **Restriction:** Currently NOT compatible with the "Drag & Drop" addon.
 
-Compatibility: Designed for the standard JetFormBuilder "File Upload" field.
+---
 
-Note: Currently not compatible with the "Drag & Drop" addon.
+## ⚙️ Installation
 
-⚙️ Installation
-Upload the plugin folder to the /wp-content/plugins/ directory.
+1. Download the latest release.
+2. Upload the plugin folder to your `/wp-content/plugins/` directory.
+3. Activate the plugin in WordPress.
+4. Go to **JetFormBuilder > WebP Settings** to configure your optimization rules.
 
-Activate the plugin through the 'Plugins' menu in WordPress.
+---
 
-Navigate to the JetFormBuilder WebP settings page to configure your optimization preferences.
+## 🧪 Beta Testing
+This plugin is currently in a testing phase. If you encounter any bugs or have feature requests, please:
+1. Open an **Issue** here on GitHub.
+2. Provide details about your server environment (PHP version, GD/ImageMagick).
