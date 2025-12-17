@@ -1,0 +1,131 @@
+/* Overlay loader per conversione WebP */
+.jfb-webp-loader-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 999999;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.jfb-webp-loader-overlay.active {
+    opacity: 1;
+    visibility: visible;
+}
+
+.jfb-webp-loader-content {
+    background: white;
+    padding: 40px;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+    text-align: center;
+    max-width: 400px;
+    width: 90%;
+}
+
+.jfb-webp-loader-spinner {
+    width: 60px;
+    height: 60px;
+    margin: 0 auto 20px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #2271b1;
+    border-radius: 50%;
+    animation: jfb-spin 1s linear infinite;
+}
+
+@keyframes jfb-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.jfb-webp-loader-message {
+    font-size: 18px;
+    font-weight: 600;
+    color: #2271b1;
+    margin-bottom: 10px;
+}
+
+.jfb-webp-loader-submessage {
+    font-size: 14px;
+    color: #666;
+}
+
+/* Loader inline per il campo media */
+.jet-form-builder__field-wrap.jfb-webp-converting {
+    position: relative;
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.jet-form-builder__field-wrap.jfb-webp-converting::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 30px;
+    height: 30px;
+    margin: -15px 0 0 -15px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #2271b1;
+    border-radius: 50%;
+    animation: jfb-spin 1s linear infinite;
+    z-index: 10;
+}
+
+/* Badge di conversione completata */
+.jfb-webp-converted-badge {
+    display: inline-block;
+    background: #00a32a;
+    color: white;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 10px;
+    animation: jfb-badge-appear 0.3s ease;
+}
+
+@keyframes jfb-badge-appear {
+    from {
+        opacity: 0;
+        transform: scale(0.8);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+/* Stile per il messaggio di conversione nel campo */
+.jfb-webp-field-message {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: #e7f5fe;
+    border-left: 3px solid #2271b1;
+    border-radius: 4px;
+    font-size: 13px;
+    color: #2c3338;
+    animation: jfb-message-slide 0.3s ease;
+}
+
+@keyframes jfb-message-slide {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.jfb-webp-field-message strong {
+    color: #2271b1;
+}
